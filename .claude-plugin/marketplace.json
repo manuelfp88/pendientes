@@ -1,0 +1,6 @@
+{
+  "name": "pendientes",
+  "owner": { "name": "manuelfp88" },
+  "description": "pendientes: los chats de Claude Code que terminaron o esperan tu respuesta mientras trabajabas en otro, en el pie del cuadro de escribir.",
+  "plugins": [{ "name": "pendientes", "source": "./" }]
+}
