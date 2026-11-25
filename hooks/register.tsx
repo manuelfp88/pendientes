@@ -46,6 +46,13 @@ type Track = { answeredAt?: number; focusedAt: number; isPending: boolean }
 const respuestas = async ($: EngineInterface) => `${(await getRutas($)).home}/.claude/pendientes-fin`
 const userTurn = atom({ plugin: 'pendientes', key: 'userTurn' } as const, false)
 
+// Cuándo se limpió el aviso por última vez, compartido por todas las sesiones:
+// lo que estaba pendiente o esperando antes de ese momento deja de contar.
+const limpiado = async ($: EngineInterface) => `${(await getRutas($)).home}/.claude/pendientes-limpiado`
+// Segundo clic dentro de este tiempo tras ver la lista: limpia.
+const DOBLE = 8000
+let shownAt = 0
+
 // Los títulos largos, sobre todo los de los chats laterales, se cortan para que el aviso no se alargue.
 const LARGO = 30
 // Los chats laterales llevan 💬 en lugar de «btw:».
@@ -89,12 +96,34 @@ const setWaiting = async ($: EngineInterface, isWaiting: boolean) => {
   await $.fs.write(`${await esperas($)}/${await $.session.id()}`, isWaiting ? 'espera' : '')
 }
 
-const readWaiting = async ($: EngineInterface) => {
+// Solo cuentan las esperas que empezaron después de la última limpieza.
+const readWaiting = async ($: EngineInterface, since: number) => {
   try {
-    return new Set((await $.fs.list(await esperas($))).filter(file => file.size > 0).map(file => file.name))
+    return new Set((await $.fs.list(await esperas($))).filter(file => file.size > 0 && file.mtimeMs > since).map(file => file.name))
   } catch {
     return new Set<string>()
   }
+}
+
+const readCleared = async ($: EngineInterface) => {
+  try {
+    return Number(await $.fs.read(await limpiado($))) || 0
+  } catch {
+    return 0
+  }
+}
+
+// Quita todos los avisos: los pendientes se dan por vistos y las esperas actuales dejan de contar.
+const clearAll = async ($: EngineInterface) => {
+  await $.fs.write(await limpiado($), String(await $.clock.now()))
+  try {
+    const state = JSON.parse(await $.fs.read(await estado($))) as Record<string, Track>
+    for (const track of Object.values(state)) track.isPending = false
+    await $.fs.write(await estado($), JSON.stringify(state))
+  } catch {
+    // Sin estado todavía: no hay nada pendiente que quitar.
+  }
+  await poll($)
 }
 
 const poll = async ($: EngineInterface) => {
@@ -110,7 +139,7 @@ const poll = async ($: EngineInterface) => {
     const rows = (await Promise.all(files.map(({ dir, file }) => load($, dir, file.name, file.mtimeMs)))).filter(row => row !== undefined)
     // Los chats laterales cuentan igual que los demás.
     const main = rows.filter(row => !row.isArchived)
-    const waiting = await readWaiting($)
+    const waiting = await readWaiting($, await readCleared($))
     const isWaiting = (row: Row) => row.cliIds.some(id => waiting.has(id))
     const current = Math.max(0, ...main.map(row => row.focusedAt))
     const currentId = main.find(row => row.focusedAt === current)?.id
@@ -238,10 +267,19 @@ export const register: Register = on => {
     if (!isActive && !broken) return drawn
     const shown = broken ? '–' : `${list.length}`
 
-    const show = () => {
+    // Primer clic: la lista. Segundo clic mientras se ve: lo limpia todo.
+    const show = async () => {
+      const now = await $.clock.now()
+      if (isActive && now - shownAt < DOBLE) {
+        shownAt = 0
+        await clearAll($)
+        $.ui.toast('Avisos limpiados', { timeoutMs: 3000 })
+        return
+      }
+      shownAt = now
       // Una sola línea, como en working: 🟡 te pide una decisión, 🔵 ha terminado.
       const lines = list.map(chat => `${chat.needsAction ? '🟡' : '🔵'} ${corto(chat.title)}`)
-      $.ui.toast(isActive ? lines.join('  ') : 'Ningún chat te espera', { timeoutMs: 8000 })
+      $.ui.toast(isActive ? `${lines.join('  ')}  · otro clic para limpiar` : 'Ningún chat te espera', { timeoutMs: DOBLE })
     }
 
     return (

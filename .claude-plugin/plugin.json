@@ -1,6 +1,6 @@
 {
   "name": "pendientes",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Muestra en el pie cuántos chats han terminado o esperan tu respuesta mientras trabajabas en otro; al pulsarlo, cuáles.",
   "types": "./types/index.d.ts",
   "author": {
